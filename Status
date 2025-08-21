@@ -1,3 +1,4 @@
 getgenv().EnabledAB = true 
 getgenv().EnabledASRM = true
 getgenv().EnabledHN = true
+getgenv().EnabledBB = true
