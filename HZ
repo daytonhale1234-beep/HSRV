@@ -1,0 +1,1120 @@
+-- HolyServices - Basketball Enhancement Script with Obsidian UI
+local Library = loadstring(
+    game:HttpGet(
+        'https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/Library.lua'
+    )
+)()
+
+-- Services
+local Players = game:GetService('Players')
+local TweenService = game:GetService('TweenService')
+local RunService = game:GetService('RunService')
+local UIS = game:GetService('UserInputService')
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local ContextActionService = game:GetService('ContextActionService')
+local Workspace = game:GetService('Workspace')
+local player = Players.LocalPlayer
+
+-- VARIABLES
+local CamlockEnabled = false
+local LocalPlayer = Players.LocalPlayer
+local BallGrabEnabled = false
+local BallGrabDistance = 50
+local BallReach = { Distance = BallGrabDistance }
+local BallMags = { Distance = BallGrabDistance }
+local speedBoostEnabled = false
+local speedBoostMultiplier = 5
+local speedBoostConnection = nil
+local spinbotEnabled = false
+local spinbotHoldEnabled = false
+local spinbotSpeed = 2
+local spinbotConnection = nil
+local spinbotHoldConnection = nil
+local spinbotInputEndConnection = nil
+local spinbotHoldActive = false
+local currentAngularVelocity = nil
+local autoGuardEnabled = false
+local autoGuardDistance = 17
+local antiOutOfBoundsEnabled = false
+local oobMonitoringEnabled = false
+local oobGuiIndicator = nil
+local isGuardKeyHeld = false
+local rimParts = {}
+local autoGuardConnection = nil
+local infiniteStaminaEnabled = false
+local ballMagnetRange = 20
+local allBasketballs = {}
+local ballMagnetConnection, ballSearchConnection
+
+-- OOB REMOVER FUNCTIONS
+local function removeOOB(obj)
+    if obj.Name:upper() == 'OOB' or obj.Name:lower() == 'oob' then
+        print('Removing OOB from:', obj.Parent.Name)
+        obj:Destroy()
+        return true
+    end
+    return false
+end
+
+local function removeAllExistingOOB()
+    print('Scanning workspace for existing OOB folders...')
+    local removed = 0
+
+    -- Check if Courts folder exists
+    local courts = Workspace:FindFirstChild('Courts')
+    if courts then
+        -- Scan all courts
+        for _, court in ipairs(courts:GetChildren()) do
+            if court:IsA('Model') or court:IsA('Folder') then
+                -- Look for OOB folder in each court
+                local oob = court:FindFirstChild('OOB')
+                    or court:FindFirstChild('oob')
+                if oob then
+                    print('Found and removing OOB from court:', court.Name)
+                    oob:Destroy()
+                    removed = removed + 1
+                end
+            end
+        end
+    else
+        print('Courts folder not found in workspace')
+    end
+
+    -- Also scan the entire workspace for any OOB folders
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if removeOOB(obj) then
+            removed = removed + 1
+        end
+    end
+
+    print('Removed', removed, 'OOB folders/objects')
+    return removed
+end
+
+local function monitorNewOOB()
+    print('Starting OOB monitor...')
+
+    -- Monitor for new descendants being added to workspace
+    if not _G.HS_OOB_WorkspaceConn or not _G.HS_OOB_WorkspaceConn.Connected then
+        _G.HS_OOB_WorkspaceConn = Workspace.DescendantAdded:Connect(
+            function(descendant)
+                if
+                    oobMonitoringEnabled
+                    and (
+                        descendant.Name:upper() == 'OOB'
+                        or descendant.Name:lower() == 'oob'
+                    )
+                then
+                    print(
+                        'Detected new OOB folder, removing:',
+                        descendant:GetFullName()
+                    )
+                    -- Small delay to ensure it's fully loaded before destroying
+                    task.wait(0.1)
+                    if descendant.Parent then
+                        descendant:Destroy()
+                    end
+                end
+            end
+        )
+    end
+
+    -- Also monitor the Courts folder specifically if it exists
+    local courts = Workspace:FindFirstChild('Courts')
+    if
+        courts
+        and (not _G.HS_OOB_CourtsConn or not _G.HS_OOB_CourtsConn.Connected)
+    then
+        _G.HS_OOB_CourtsConn = courts.DescendantAdded:Connect(
+            function(descendant)
+                if
+                    oobMonitoringEnabled
+                    and (
+                        descendant.Name:upper() == 'OOB'
+                        or descendant.Name:lower() == 'oob'
+                    )
+                then
+                    print(
+                        'Detected new OOB in Courts, removing:',
+                        descendant:GetFullName()
+                    )
+                    task.wait(0.1)
+                    if descendant.Parent then
+                        descendant:Destroy()
+                    end
+                end
+            end
+        )
+    end
+end
+
+local function createOOBIndicator()
+    if oobGuiIndicator then
+        return -- Already exists
+    end
+
+    if player and player:FindFirstChild('PlayerGui') then
+        local screenGui = Instance.new('ScreenGui')
+        screenGui.Name = 'OOBRemoverIndicator'
+        screenGui.ResetOnSpawn = false
+        screenGui.Parent = player.PlayerGui
+
+        local indicator = Instance.new('TextLabel')
+        indicator.Size = UDim2.new(0.1, 0.1, 0, 0.1)
+        indicator.Position = UDim2.new(0, 5, 1, 5)
+        indicator.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+        indicator.TextColor3 = Color3.fromRGB(255, 255, 255)
+        indicator.Text = 'OOB Remover: ACTIVE'
+        indicator.TextScaled = true
+        indicator.Font = Enum.Font.GothamBold
+        indicator.BorderSizePixel = 0
+        indicator.Parent = screenGui
+
+        local corner = Instance.new('UICorner')
+        corner.CornerRadius = UDim.new(0, 8)
+        corner.Parent = indicator
+
+        oobGuiIndicator = screenGui
+        print('GUI indicator created - OOB Remover is active!')
+    end
+end
+
+local function removeOOBIndicator()
+    if oobGuiIndicator then
+        oobGuiIndicator:Destroy()
+        oobGuiIndicator = nil
+        print('OOB indicator removed')
+    end
+end
+
+local function stopOOBMonitoring()
+    oobMonitoringEnabled = false
+    if _G.HS_OOB_WorkspaceConn and _G.HS_OOB_WorkspaceConn.Connected then
+        _G.HS_OOB_WorkspaceConn:Disconnect()
+    end
+    if _G.HS_OOB_CourtsConn and _G.HS_OOB_CourtsConn.Connected then
+        _G.HS_OOB_CourtsConn:Disconnect()
+    end
+    removeOOBIndicator()
+    print('OOB monitoring stopped')
+end
+
+-- BALL MAG FUNCTIONS
+local function GetClosestPart(Ball)
+    if LocalPlayer.Character then
+        local ClosestDistance = math.huge
+        local ClosestPart
+        for _, v in pairs(LocalPlayer.Character:GetChildren()) do
+            if v:IsA('BasePart') then
+                local Distance = (v.Position - Ball.Position).Magnitude
+                if Distance < ClosestDistance then
+                    ClosestDistance = Distance
+                    ClosestPart = v
+                end
+            end
+        end
+        return ClosestPart
+    end
+end
+
+function BallMags:GetClosestBall()
+    local ClosestBall
+    local ClosestDistance = math.huge
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj.Name == 'Basketball' and obj:FindFirstChild('Ball') then
+            local Ball = obj.Ball
+            local RootPart = LocalPlayer.Character
+                and LocalPlayer.Character:FindFirstChild('HumanoidRootPart')
+            if Ball and RootPart then
+                local Distance = (Ball.Position - RootPart.Position).Magnitude
+                if Distance < self.Distance and Distance < ClosestDistance then
+                    ClosestBall = Ball
+                    ClosestDistance = Distance
+                end
+            end
+        end
+    end
+    return ClosestBall
+end
+
+function BallReach:GetClosestBall()
+    local ClosestBall
+    local ClosestDistance = math.huge
+    for _, Player in ipairs(Players:GetPlayers()) do
+        local Ball = Player.Character
+            and Player.Character:FindFirstChild('Basketball')
+            and Player.Character.Basketball:FindFirstChild('Ball')
+        local RootPart = LocalPlayer.Character
+            and LocalPlayer.Character:FindFirstChild('HumanoidRootPart')
+        if Ball and RootPart then
+            local Distance = (Ball.Position - RootPart.Position).Magnitude
+            if Distance < self.Distance and Distance < ClosestDistance then
+                ClosestBall = Ball
+                ClosestDistance = Distance
+            end
+        end
+    end
+    return ClosestBall
+end
+
+-- Ball Mag Loop
+RunService.RenderStepped:Connect(function()
+    if not BallGrabEnabled then
+        return
+    end
+
+    BallReach.Distance = BallGrabDistance
+    BallMags.Distance = BallGrabDistance
+
+    local MagsBall = BallMags:GetClosestBall()
+    local ReachBall = BallReach:GetClosestBall()
+    local Root1, Root2 =
+        MagsBall and GetClosestPart(MagsBall),
+        ReachBall and GetClosestPart(ReachBall)
+
+    if MagsBall and Root1 then
+        firetouchinterest(Root1, MagsBall, 0)
+        task.wait()
+        firetouchinterest(Root1, MagsBall, 1)
+    end
+
+    if ReachBall and Root2 then
+        firetouchinterest(Root2, ReachBall, 0)
+        task.wait()
+        firetouchinterest(Root2, ReachBall, 1)
+    end
+end)
+
+-- SPINBOT FUNCTIONS
+local function setSpinbotState(state)
+    spinbotEnabled = state
+    if spinbotConnection then
+        spinbotConnection:Disconnect()
+        spinbotConnection = nil
+    end
+    if state then
+        spinbotConnection = UIS.InputBegan:Connect(
+            function(input, gameProcessed)
+                if not spinbotEnabled or gameProcessed then
+                    return
+                end
+                if
+                    input.KeyCode == Enum.KeyCode.T
+                    or input.KeyCode == Enum.KeyCode.ButtonL1
+                then
+                    local character = player.Character
+                    local root = character
+                        and character:FindFirstChild('HumanoidRootPart')
+                    if not root then
+                        return
+                    end
+                    local angleRotated = 0
+                    local baseSpeed = 360 + spinbotSpeed * 100
+                    local spinSpeed = math.rad(baseSpeed)
+                    local spinTarget = 2 * math.pi
+                    local angularVelocity = Instance.new('BodyAngularVelocity')
+                    angularVelocity.MaxTorque = Vector3.new(0, math.huge, 0)
+                    angularVelocity.AngularVelocity =
+                        Vector3.new(0, spinSpeed, 0)
+                    angularVelocity.P = 10000
+                    angularVelocity.Parent = root
+                    local lastTime = tick()
+                    local conn
+                    conn = RunService.RenderStepped:Connect(function()
+                        if not spinbotEnabled then
+                            angularVelocity:Destroy()
+                            conn:Disconnect()
+                            return
+                        end
+                        local now = tick()
+                        local delta = now - lastTime
+                        lastTime = now
+                        local deltaAngle = spinSpeed * delta
+                        angleRotated = angleRotated + deltaAngle
+                        if angleRotated >= spinTarget then
+                            angularVelocity:Destroy()
+                            conn:Disconnect()
+                        end
+                    end)
+                end
+            end
+        )
+    end
+end
+
+local function setSpinbotHoldState(state)
+    spinbotHoldEnabled = state
+
+    if spinbotHoldConnection then
+        spinbotHoldConnection:Disconnect()
+        spinbotHoldConnection = nil
+    end
+    if spinbotInputEndConnection then
+        spinbotInputEndConnection:Disconnect()
+        spinbotInputEndConnection = nil
+    end
+
+    if currentAngularVelocity then
+        currentAngularVelocity:Destroy()
+        currentAngularVelocity = nil
+    end
+
+    if not state then
+        spinbotHoldActive = false
+        return
+    end
+
+    if state then
+        spinbotHoldConnection = UIS.InputBegan:Connect(
+            function(input, gameProcessed)
+                if not spinbotHoldEnabled or gameProcessed then
+                    return
+                end
+                if
+                    input.KeyCode == Enum.KeyCode.T
+                    or input.KeyCode == Enum.KeyCode.ButtonL1
+                then
+                    if not spinbotHoldActive then
+                        spinbotHoldActive = true
+                        local character = player.Character
+                        local root = character
+                            and character:FindFirstChild('HumanoidRootPart')
+                        if not root then
+                            spinbotHoldActive = false
+                            return
+                        end
+
+                        if currentAngularVelocity then
+                            currentAngularVelocity:Destroy()
+                            currentAngularVelocity = nil
+                        end
+
+                        local baseSpeed = 360 + spinbotSpeed * 100
+                        local spinSpeed = math.rad(baseSpeed)
+                        currentAngularVelocity =
+                            Instance.new('BodyAngularVelocity')
+                        currentAngularVelocity.MaxTorque =
+                            Vector3.new(0, math.huge, 0)
+                        currentAngularVelocity.AngularVelocity =
+                            Vector3.new(0, spinSpeed, 0)
+                        currentAngularVelocity.P = 10000
+                        currentAngularVelocity.Parent = root
+
+                        local speedUpdateConnection
+                        speedUpdateConnection = RunService.RenderStepped:Connect(
+                            function()
+                                if
+                                    not spinbotHoldEnabled
+                                    or not spinbotHoldActive
+                                    or not currentAngularVelocity
+                                then
+                                    if speedUpdateConnection then
+                                        speedUpdateConnection:Disconnect()
+                                    end
+                                    return
+                                end
+
+                                local newBaseSpeed = 360 + spinbotSpeed * 100
+                                local newSpinSpeed = math.rad(newBaseSpeed)
+                                if
+                                    currentAngularVelocity
+                                    and currentAngularVelocity.Parent
+                                then
+                                    currentAngularVelocity.AngularVelocity =
+                                        Vector3.new(0, newSpinSpeed, 0)
+                                end
+                            end
+                        )
+                    end
+                end
+            end
+        )
+
+        spinbotInputEndConnection = UIS.InputEnded:Connect(
+            function(input, gameProcessed)
+                if not spinbotHoldEnabled or gameProcessed then
+                    return
+                end
+                if
+                    input.KeyCode == Enum.KeyCode.T
+                    or input.KeyCode == Enum.KeyCode.ButtonL1
+                then
+                    if spinbotHoldActive then
+                        spinbotHoldActive = false
+
+                        if currentAngularVelocity then
+                            currentAngularVelocity:Destroy()
+                            currentAngularVelocity = nil
+                        end
+                    end
+                end
+            end
+        )
+    end
+end
+
+-- CAMLOCK FUNCTIONS
+local function Camlock()
+    local Player = LocalPlayer
+    local Character = Player.Character or Player.CharacterAdded:Wait()
+    local Camera = workspace.CurrentCamera
+    local Humanoid = Character:WaitForChild('Humanoid')
+
+    local function IsHoldingBasketball()
+        local Basketball = Character:FindFirstChild('Basketball')
+        return Basketball and Basketball:FindFirstChild('Ball')
+    end
+
+    local function GetGoal()
+        local Distance, Goal = math.huge, nil
+        local CharacterPosition = Character.PrimaryPart.Position
+
+        local function CheckHoops(container)
+            if not container then
+                return
+            end
+            for _, court in ipairs(container:GetChildren()) do
+                for _, Obj in ipairs(court:GetDescendants()) do
+                    if
+                        Obj.Name == 'Swish'
+                        and Obj.Parent:FindFirstChildOfClass('TouchTransmitter')
+                    then
+                        local HoopPosition = Obj.Parent.Position
+                        local Magnitude = (CharacterPosition - HoopPosition).Magnitude
+                        if Magnitude < Distance then
+                            Distance = Magnitude
+                            Goal = Obj.Parent
+                        end
+                    end
+                end
+            end
+        end
+
+        CheckHoops(workspace:FindFirstChild('Courts'))
+        CheckHoops(workspace:FindFirstChild('PracticeArea'))
+
+        return Goal, Distance
+    end
+
+    local function GetMobileArc(dist)
+        local baseArc = ({
+            [59] = 20,
+            [60] = 20,
+            [61] = 20,
+            [62] = 20,
+            [63] = 18,
+            [64] = 18,
+            [65] = 18,
+            [66] = 15,
+            [67] = 15,
+            [68] = 13,
+            [69] = 13,
+            [70] = 10,
+            [71] = 10,
+        })[dist] or 8
+        return baseArc + 2
+    end
+
+    local function AdjustCameraForJump()
+        if not CamlockEnabled or not IsHoldingBasketball() then
+            return
+        end
+
+        local Goal, Distance = GetGoal()
+        if Goal then
+            local ArcAdjustment = GetMobileArc(math.floor(Distance))
+            local BasketPosition = Goal.Position
+                + Vector3.new(0, ArcAdjustment, 0)
+            local OldCFrame = Camera.CFrame
+            Player.DevEnableMouseLock = false
+            Camera.CFrame =
+                CFrame.new(Player.Character.Head.Position, BasketPosition)
+            firesignal(Player.PlayerGui.Button.MouseButton1Click)
+            Camera.CFrame = OldCFrame
+            Player.DevEnableMouseLock = false
+        end
+    end
+
+    local function ResetCamera()
+        Camera.CameraType = Enum.CameraType.Custom
+    end
+
+    Humanoid.StateChanged:Connect(function(_, NewState)
+        if CamlockEnabled and NewState == Enum.HumanoidStateType.Jumping then
+            AdjustCameraForJump()
+        elseif NewState == Enum.HumanoidStateType.Landed then
+            ResetCamera()
+        end
+    end)
+end
+
+-- Initialize Camlock
+player.CharacterAdded:Connect(Camlock)
+if player.Character then
+    Camlock()
+end
+
+-- AUTO GUARD INPUT HANDLING
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then
+        return
+    end
+    if
+        input.KeyCode == Enum.KeyCode.G
+        or input.KeyCode == Enum.KeyCode.ButtonL2
+    then
+        isGuardKeyHeld = true
+    end
+end)
+
+UIS.InputEnded:Connect(function(input, gameProcessed)
+    if gameProcessed then
+        return
+    end
+    if
+        input.KeyCode == Enum.KeyCode.G
+        or input.KeyCode == Enum.KeyCode.ButtonL2
+    then
+        isGuardKeyHeld = false
+    end
+end)
+
+-- Mobile guard button support
+task.spawn(function()
+    local gui = player:WaitForChild('PlayerGui', 5)
+    local mobile = gui:FindFirstChild('Mobile')
+    if not mobile then
+        return
+    end
+    local defense = mobile:FindFirstChild('Defense')
+    if not defense then
+        return
+    end
+    local guardButton = defense:FindFirstChild('Guard')
+    if guardButton then
+        guardButton.TouchTap:Connect(function()
+            isGuardKeyHeld = true
+        end)
+        guardButton.TouchEnded:Connect(function()
+            isGuardKeyHeld = false
+        end)
+        guardButton.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch then
+                isGuardKeyHeld = true
+            end
+        end)
+        guardButton.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch then
+                isGuardKeyHeld = false
+            end
+        end)
+    end
+end)
+
+-- Rim detection for auto guard
+local function tryAddRim(part)
+    if part:IsA('MeshPart') and part.Name:lower():find('rim') then
+        table.insert(rimParts, part)
+    end
+end
+for _, part in ipairs(workspace:GetDescendants()) do
+    tryAddRim(part)
+end
+workspace.DescendantAdded:Connect(tryAddRim)
+
+-- MAIN GAME LOOP
+RunService.RenderStepped:Connect(function(dt)
+    local character = player.Character
+    local rootPart = character and character:FindFirstChild('HumanoidRootPart')
+    local humanoid = character and character:FindFirstChild('Humanoid')
+    if not rootPart or not humanoid then
+        return
+    end
+end)
+
+-- INTRO SOUND
+local gui = Instance.new('ScreenGui')
+gui.Name = 'HolyServicesIntro'
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.Enabled = false
+gui.Parent = player:WaitForChild('PlayerGui')
+
+local introSong = Instance.new('Sound', gui)
+introSong.SoundId = 'rbxassetid://76495165306796'
+introSong.Volume = 1
+introSong.Looped = false
+introSong.Loaded:Wait()
+gui.Enabled = true
+introSong:Play()
+
+-- Clean up intro GUI after sound finishes
+introSong.Ended:Connect(function()
+    gui:Destroy()
+end)
+
+-- CREATE OBSIDIAN WINDOW
+local Window = Library:CreateWindow({
+    Title = 'HolyServices',
+    Footer = 'discord.gg/hsrv - Basketball Enhancement',
+    Size = UDim2.fromOffset(5, 5),
+    Icon = 'rbxassetid://87172502193736',
+})
+
+-- Set custom pink color scheme for all text
+Library.Scheme.FontColor = Color3.fromHex('#FFFFFF')
+Library.Scheme.AccentColor = Color3.fromHex('#FF69B4')
+Library:UpdateColorsUsingRegistry()
+
+-- Custom icon positioning and sizing - FIXED VERSION
+task.spawn(function()
+    task.wait(0.5) -- Wait for UI to fully load
+    local screenGui = player.PlayerGui:FindFirstChild('Obsidian')
+    if screenGui then
+        -- Find the icon in the UI hierarchy
+        local function findIcon(parent)
+            for _, child in ipairs(parent:GetDescendants()) do
+                if
+                    child:IsA('ImageLabel')
+                    and child.Image == 'rbxassetid://87172502193736'
+                then
+                    return child
+                end
+            end
+        end
+
+        local icon = findIcon(screenGui)
+        if icon then
+            -- Make it much smaller (changed to 0.3 for very small size)
+            local currentSize = icon.Size
+            icon.Size = UDim2.new(
+                currentSize.X.Scale * 0.3, -- Much smaller - 30% of original size
+                currentSize.X.Offset,
+                currentSize.Y.Scale * 0.3, -- Much smaller - 30% of original size
+                currentSize.Y.Offset
+            )
+
+            -- Push it more to the left
+            local currentPos = icon.Position
+            icon.Position = UDim2.new(
+                currentPos.X.Scale,
+                currentPos.X.Offset - 15,
+                currentPos.Y.Scale,
+                currentPos.Y.Offset
+            )
+
+            print('Custom icon positioning applied!')
+        end
+    end
+end)
+
+-- CREATE TABS
+local ShootingTab = Window:AddTab({
+    Name = 'Shooting',
+    Icon = 'target',
+    Description = 'Shooting assistance and aim features',
+})
+
+local PlayerTab = Window:AddTab({
+    Name = 'Player',
+    Icon = 'user',
+    Description = 'Movement and player enhancement features',
+})
+
+local DefenseTab = Window:AddTab({
+    Name = 'Defense',
+    Icon = 'shield',
+    Description = 'Defensive positioning and guard features',
+})
+
+local MiscTab = Window:AddTab({
+    Name = 'Misc',
+    Icon = 'zap',
+    Description = 'Additional utilities and tools',
+})
+
+-- SHOOTING TAB CONTENT
+local ShootingBox = ShootingTab:AddLeftGroupbox('Aim Assistance', 'target')
+
+ShootingBox:AddToggle('Camlock', {
+    Text = 'Enable Camlock',
+    Default = false,
+    Tooltip = 'Automatically aims at the nearest basketball hoop when jumping with a ball',
+    Callback = function(state)
+        CamlockEnabled = state
+    end,
+})
+
+-- PLAYER TAB CONTENT
+local MovementBox = PlayerTab:AddLeftGroupbox('Movement', 'zap')
+
+MovementBox:AddToggle('SpeedBoost', {
+    Text = 'Speed Boost',
+    Default = false,
+    Tooltip = "Increases your walking speed (don't go over 35)",
+    Callback = function(state)
+        speedBoostEnabled = state
+        if speedBoostConnection then
+            speedBoostConnection:Disconnect()
+        end
+        if state then
+            speedBoostConnection = RunService.Heartbeat:Connect(function()
+                local character = player.Character
+                if not character then
+                    return
+                end
+                local humanoid = character:FindFirstChildOfClass('Humanoid')
+                local rootPart = character:FindFirstChild('HumanoidRootPart')
+                if not humanoid or not rootPart then
+                    return
+                end
+                local moveDir = humanoid.MoveDirection
+                if moveDir.Magnitude > 0 then
+                    rootPart.Velocity = moveDir.Unit * speedBoostMultiplier
+                end
+            end)
+        end
+    end,
+})
+
+MovementBox:AddSlider('SpeedMultiplier', {
+    Text = 'Speed Multiplier',
+    Default = 5,
+    Min = 0,
+    Max = 50,
+    Tooltip = 'Adjust movement speed multiplier (recommended max: 35)',
+    Callback = function(value)
+        speedBoostMultiplier = value
+
+        if speedBoostEnabled then
+            if speedBoostConnection then
+                speedBoostConnection:Disconnect()
+            end
+            speedBoostConnection = RunService.Heartbeat:Connect(function()
+                local character = player.Character
+                if not character then
+                    return
+                end
+                local humanoid = character:FindFirstChildOfClass('Humanoid')
+                local rootPart = character:FindFirstChild('HumanoidRootPart')
+                if not humanoid or not rootPart then
+                    return
+                end
+                local moveDir = humanoid.MoveDirection
+                if moveDir.Magnitude > 0 then
+                    rootPart.Velocity = moveDir.Unit * speedBoostMultiplier
+                end
+            end)
+        end
+    end,
+})
+
+local SpinBox = PlayerTab:AddRightGroupbox('Spinbot', 'rotate-cw')
+
+SpinBox:AddToggle('Spinbot', {
+    Text = 'Enable Spinbot',
+    Default = false,
+    Tooltip = 'Press T/L1 to spin when enabled',
+    Callback = function(state)
+        setSpinbotState(state)
+    end,
+})
+
+SpinBox:AddToggle('SpinbotHold', {
+    Text = 'Spinbot Hold Mode',
+    Default = false,
+    Tooltip = 'Hold T/L1 to spin continuously instead of tapping',
+    Callback = function(state)
+        setSpinbotHoldState(state)
+    end,
+})
+
+SpinBox:AddSlider('SpinbotSpeed', {
+    Text = 'Spinbot Speed',
+    Default = 2,
+    Min = 0,
+    Max = 50,
+    Tooltip = 'Adjust the speed of the spinbot rotation',
+    Callback = function(value)
+        spinbotSpeed = value
+    end,
+})
+
+local BallBox = PlayerTab:AddLeftGroupbox('Ball Features', 'circle')
+
+BallBox:AddToggle('BallMag', {
+    Text = 'Enable Ball Mag',
+    Default = false,
+    Tooltip = 'Automatically grabs nearby basketballs from players and the court',
+    Callback = function(state)
+        BallGrabEnabled = state
+    end,
+})
+
+BallBox:AddSlider('BallMagDistance', {
+    Text = 'Ball Mag Distance',
+    Default = 50,
+    Min = 10,
+    Max = 150,
+    Tooltip = 'Range at which balls will be automatically grabbed',
+    Callback = function(value)
+        BallGrabDistance = value
+    end,
+})
+
+local UtilsBox = PlayerTab:AddRightGroupbox('Utilities', 'settings')
+
+UtilsBox:AddToggle('AntiOutOfBounds', {
+    Text = 'Anti Out of Bounds',
+    Default = false,
+    Tooltip = 'Advanced OOB remover - removes existing and prevents new OOB folders',
+    Callback = function(state)
+        antiOutOfBoundsEnabled = state
+        oobMonitoringEnabled = state
+
+        if antiOutOfBoundsEnabled then
+            print('=== Advanced OOB Remover Activated ===')
+            -- Remove all existing OOB folders
+            local removedCount = removeAllExistingOOB()
+
+            -- Set up monitoring for new OOB folders
+            monitorNewOOB()
+
+            -- Create GUI indicator
+            createOOBIndicator()
+
+            print(
+                'Advanced OOB removal complete! Removed',
+                removedCount,
+                'OOB objects'
+            )
+            print('Monitoring for new OOB folders...')
+
+            Library:Notify({
+                Title = 'OOB Remover',
+                Description = string.format(
+                    'Removed %d OOB objects and started monitoring',
+                    removedCount
+                ),
+                Time = 3,
+            })
+        else
+            print('=== Advanced OOB Remover Deactivated ===')
+            stopOOBMonitoring()
+
+            Library:Notify({
+                Title = 'OOB Remover',
+                Description = 'OOB monitoring stopped',
+                Time = 2,
+            })
+        end
+    end,
+})
+
+-- DEFENSE TAB CONTENT
+local GuardBox = DefenseTab:AddLeftGroupbox('Guard Features', 'shield')
+
+GuardBox:AddToggle('AutoGuard', {
+    Text = 'Auto Guard',
+    Default = false,
+    Tooltip = 'Hold G/L2/mobile guard button to automatically guard the closest player',
+    Callback = function(state)
+        autoGuardEnabled = state
+        if autoGuardConnection then
+            autoGuardConnection:Disconnect()
+            autoGuardConnection = nil
+        end
+        if state then
+            autoGuardConnection = RunService.RenderStepped:Connect(function(dt)
+                if not isGuardKeyHeld then
+                    return
+                end
+                local char = player.Character
+                local hum = char and char:FindFirstChild('Humanoid')
+                local root = char and char:FindFirstChild('HumanoidRootPart')
+                if not (hum and root) then
+                    return
+                end
+                local closest, dist = nil, math.huge
+                for _, p in ipairs(Players:GetPlayers()) do
+                    local otherRoot = p.Character
+                        and p.Character:FindFirstChild('HumanoidRootPart')
+                    if p ~= player and otherRoot then
+                        local mag = (otherRoot.Position - root.Position).Magnitude
+                        if mag < dist then
+                            closest = p.Character
+                            dist = mag
+                        end
+                    end
+                end
+                local rim, rimDist = nil, math.huge
+                for _, r in ipairs(rimParts) do
+                    if r and r:IsDescendantOf(workspace) then
+                        local d = (r.Position - root.Position).Magnitude
+                        if d < rimDist then
+                            rim = r
+                            rimDist = d
+                        end
+                    end
+                end
+                if closest and rim then
+                    local rimPos = rim.Position
+                    local targetPos =
+                        closest:FindFirstChild('HumanoidRootPart').Position
+                    local dir = (targetPos - rimPos).Unit
+                    local desired = targetPos - dir * autoGuardDistance
+                    desired = Vector3.new(desired.X, root.Position.Y, desired.Z)
+                    local moveVec = desired - root.Position
+                    if moveVec.Magnitude > 0.1 then
+                        hum:Move(moveVec.Unit, false)
+                    else
+                        hum:Move(Vector3.zero, false)
+                    end
+                    local face = CFrame.new(
+                        root.Position,
+                        Vector3.new(targetPos.X, root.Position.Y, targetPos.Z)
+                    )
+                    local rimDir = (rimPos - root.Position).Unit
+                    local forward = face.LookVector
+                    local dot = forward:Dot(rimDir)
+                    local targetCF = (dot > 0)
+                            and face * CFrame.Angles(0, math.rad(180), 0)
+                        or face
+                    root.CFrame =
+                        root.CFrame:Lerp(targetCF, math.clamp(8 * dt, 0, 1))
+                end
+            end)
+        end
+    end,
+})
+
+GuardBox:AddSlider('GuardDistance', {
+    Text = 'Guard Distance',
+    Default = 17,
+    Min = 5,
+    Max = 25,
+    Tooltip = 'Distance to maintain from the opponent when guarding',
+    Callback = function(value)
+        autoGuardDistance = value
+    end,
+})
+
+-- MISC TAB CONTENT
+local InfoBox = MiscTab:AddLeftGroupbox('Information', 'info')
+
+InfoBox:AddLabel('Controls:')
+InfoBox:AddLabel('• T/L1 - Spinbot')
+InfoBox:AddLabel('• G/L2 - Auto Guard')
+
+InfoBox:AddDivider()
+
+InfoBox:AddButton({
+    Text = 'Reset All Features',
+    Tooltip = 'Reset all toggles and sliders to default values',
+    Callback = function()
+        Library:Notify({
+            Title = 'HolyServices',
+            Description = 'All features have been reset to default values',
+            Time = 3,
+        })
+
+        -- Reset all toggles
+        Library.Toggles.Camlock:SetValue(false)
+        Library.Toggles.SpeedBoost:SetValue(false)
+        Library.Toggles.Spinbot:SetValue(false)
+        Library.Toggles.SpinbotHold:SetValue(false)
+        Library.Toggles.BallMag:SetValue(false)
+        Library.Toggles.AntiOutOfBounds:SetValue(false)
+        Library.Toggles.AutoGuard:SetValue(false)
+
+        -- Reset all sliders
+        Library.Options.SpeedMultiplier:SetValue(5)
+        Library.Options.SpinbotSpeed:SetValue(2)
+        Library.Options.BallMagDistance:SetValue(50)
+        Library.Options.GuardDistance:SetValue(17)
+    end,
+})
+
+InfoBox:AddButton({
+    Text = 'Show Status',
+    Tooltip = 'Display current status of all features',
+    Callback = function()
+        local status = string.format(
+            'Status Report:\n\n'
+                .. 'Shooting:\n'
+                .. '• Camlock: %s\n\n'
+                .. 'Player:\n'
+                .. '• Speed Boost: %s (%dx)\n'
+                .. '• Spinbot: %s\n'
+                .. '• Spinbot Hold: %s\n'
+                .. '• Spinbot Speed: %dx\n'
+                .. '• Ball Mag: %s (%d studs)\n'
+                .. '• Anti Out of Bounds: %s\n\n'
+                .. 'Defense:\n'
+                .. '• Auto Guard: %s (%d studs)',
+            CamlockEnabled and 'ON' or 'OFF',
+            speedBoostEnabled and 'ON' or 'OFF',
+            speedBoostMultiplier,
+            spinbotEnabled and 'ON' or 'OFF',
+            spinbotHoldEnabled and 'ON' or 'OFF',
+            spinbotSpeed,
+            BallGrabEnabled and 'ON' or 'OFF',
+            BallGrabDistance,
+            antiOutOfBoundsEnabled and 'ON' or 'OFF',
+            autoGuardEnabled and 'ON' or 'OFF',
+            autoGuardDistance
+        )
+
+        Library:Notify({
+            Title = 'HolyServices - Status',
+            Description = status,
+            Time = 10,
+        })
+    end,
+})
+
+local OOBBox = MiscTab:AddRightGroupbox('OOB Tools', 'trash-2')
+
+OOBBox:AddButton({
+    Text = 'Manual OOB Scan',
+    Tooltip = 'Manually scan and remove all OOB folders in workspace',
+    Callback = function()
+        print('=== Manual OOB Scan Started ===')
+        local removedCount = removeAllExistingOOB()
+
+        Library:Notify({
+            Title = 'Manual OOB Scan',
+            Description = string.format(
+                'Scan complete! Removed %d OOB objects',
+                removedCount
+            ),
+            Time = 4,
+        })
+    end,
+})
+
+OOBBox:AddLabel('OOB Status:')
+local oobStatusLabel = OOBBox:AddLabel('Monitoring: OFF')
+
+-- Update OOB status label
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if oobStatusLabel then
+            local statusText = oobMonitoringEnabled and 'Monitoring: ON'
+                or 'Monitoring: OFF'
+            oobStatusLabel:SetText(statusText)
+        end
+    end
+end)
+
+-- Load notification
+Library:Notify({
+    Title = 'HolyServices',
+    Description = 'Basketball enhancement script loaded successfully!\nPress Right Control to toggle UI\n\nNew: Advanced OOB Remover integrated!',
+    Time = 5,
+})
+
+print(
+    'HolyServices - Basketball Enhancement Script loaded with Obsidian UI and Advanced OOB Remover!'
+)
