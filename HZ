@@ -160,8 +160,8 @@ local function createOOBIndicator()
         screenGui.Parent = player.PlayerGui
 
         local indicator = Instance.new('TextLabel')
-        indicator.Size = UDim2.new(0.1, 0.1, 0, 0.1)
-        indicator.Position = UDim2.new(0, 5, 1, 5)
+        indicator.Size = UDim2.new(0.3, 0.3, 0, 0.3)
+        indicator.Position = UDim2.new(0, 7, 2, 7)
         indicator.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
         indicator.TextColor3 = Color3.fromRGB(255, 255, 255)
         indicator.Text = 'OOB Remover: ACTIVE'
@@ -657,7 +657,7 @@ end)
 local Window = Library:CreateWindow({
     Title = 'HolyServices',
     Footer = 'discord.gg/hsrv - Basketball Enhancement',
-    Size = UDim2.fromOffset(5, 5),
+    Size = UDim2.fromOffset(9, 9),
     Icon = 'rbxassetid://87172502193736',
 })
 
