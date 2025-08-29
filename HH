@@ -1,0 +1,1396 @@
+local Library = loadstring(
+    game:HttpGet(
+        'https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/Library.lua'
+    )
+)()
+
+local Window = Library:CreateWindow({
+    Title = 'holyservices',
+    Footer = 'Discord.gg/holyservices',
+    ToggleKeybind = Enum.KeyCode.RightControl,
+    Center = true,
+    AutoShow = true,
+    Icon = '87172502193736',
+    IconSize = UDim2.fromOffset(32, 32),
+    BackgroundImage = 'rbxassetid://101113658774672',
+})
+
+-- Play intro sound
+local introSong = Instance.new('Sound')
+introSong.SoundId = 'rbxassetid://76495165306796'
+introSong.Volume = 1
+introSong.Looped = false
+introSong.Parent = game:GetService('SoundService')
+introSong:Play()
+
+-- Services
+local Players = game:GetService('Players')
+local UIS = game:GetService('UserInputService')
+local RunService = game:GetService('RunService')
+local TweenService = game:GetService('TweenService')
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local Workspace = game:GetService('Workspace')
+local ContextActionService = game:GetService('ContextActionService')
+local player = Players.LocalPlayer
+
+-- Config storage
+local config = {
+    autoPerfect = false,
+    infiniteStamina = false,
+    autoGuard = false,
+    guardDistance = 17,
+    antiOutOfBounds = false,
+    speedBoost = false,
+    speedMultiplier = 5,
+    spinbot = false,
+    spinbotSpeed = 2,
+    spinbotHold = false,
+    quickstopShot = false,
+    antiContest = false,
+    stretchResolution = false,
+}
+
+-- Feature state variables
+local autoGuardEnabled = false
+local isGuardKeyHeld = false
+local rimParts = {}
+local autoGuardConnection = nil
+local speedBoostConnection
+local spinbotConnection = nil
+local spinbotHoldConnection = nil
+local spinbotInputEndConnection = nil
+local spinbotHoldActive = false
+local currentAngularVelocity = nil
+local quickstopShotEnabled = false
+local quickstopConnection = nil
+local quickstopInputEndedConnection = nil
+local staminaConnection = nil
+
+-- AUTO GREEN VARIABLES
+local PERFECT_TIMING = 0.500
+local BASE_METER_DURATION = 0.7
+local GREEN_ZONE_START = 0.6
+local GREEN_ZONE_END = 0.7
+local PERFECT_RELEASE_POINT = 0.070
+local OFFDRIBBLE_TIMING = 0.570
+local OFFDRIBBLE_METER_DURATION = 0.5000
+local MOVINGSHOT_TIMING = 0.530
+local LAYUP_TIMING = 0.020
+local LAYUP_DETECTION_DISTANCE = 15
+local LAYUP_HEIGHT_THRESHOLD = 8
+local DRIVING_LAYUP_TIMING = 0.35
+local DRIVING_LAYUP_VELOCITY_THRESHOLD = 12.0
+local CLOSESHOT_TIMING = 0.450
+local CLOSESHOT_DETECTION_DISTANCE = 20
+local CURRENT_SHOT_TYPE = 'STANDING'
+local isAutoShooting = false
+local meterStartTime = 0
+local autoReleaseConnection = nil
+local shotCount = 0
+local recentVelocities = {}
+local recentInputs = {}
+local lastVelocityCheck = 0
+
+-- Create the tabs
+local ShootingTab =
+    Window:AddTab('Shooting', 'target', 'Basketball shooting features')
+local PlayerTab =
+    Window:AddTab('Player', 'user', 'Player movement and abilities')
+local DefenseTab = Window:AddTab('Defense', 'shield', 'Defensive features')
+local MiscTab = Window:AddTab('Misc', 'settings', 'Miscellaneous utilities')
+local UISettingsTab =
+    Window:AddTab('UI Settings', 'palette', 'Customize the interface')
+
+-- Create groupboxes
+local ShootingLeftGroupbox =
+    ShootingTab:AddLeftGroupbox('Shooting Features', 'target')
+local PlayerLeftGroupbox = PlayerTab:AddLeftGroupbox('Movement', 'move')
+local PlayerRightGroupbox = PlayerTab:AddRightGroupbox('Player', 'user')
+local DefenseLeftGroupbox = DefenseTab:AddLeftGroupbox('Auto Defense', 'shield')
+
+----------------------------------------------------------------------
+-- AUTO GREEN FUNCTIONS
+----------------------------------------------------------------------
+
+-- Find rim parts in workspace
+local function findRimParts()
+    local rims = {}
+
+    local function searchInContainer(container)
+        for _, obj in pairs(container:GetChildren()) do
+            if
+                obj:IsA('Part')
+                or obj:IsA('MeshPart')
+                or obj:IsA('UnionOperation')
+            then
+                local name = obj.Name:lower()
+                if
+                    name:find('rim')
+                    or name:find('hoop')
+                    or name:find('basket')
+                    or name:find('net')
+                then
+                    table.insert(rims, obj)
+                end
+            end
+
+            if obj:IsA('Folder') or obj:IsA('Model') then
+                searchInContainer(obj)
+            end
+        end
+    end
+
+    searchInContainer(workspace)
+    return rims
+end
+
+-- Calculate optimal release timing based on shot type
+local function calculateOptimalTiming()
+    if CURRENT_SHOT_TYPE == 'LAYUP' then
+        return LAYUP_TIMING
+    elseif CURRENT_SHOT_TYPE == 'DRIVING_LAYUP' then
+        return DRIVING_LAYUP_TIMING
+    elseif CURRENT_SHOT_TYPE == 'CLOSESHOT' then
+        return CLOSESHOT_TIMING
+    elseif CURRENT_SHOT_TYPE == 'MOVINGSHOT' then
+        return MOVINGSHOT_TIMING
+    elseif CURRENT_SHOT_TYPE == 'OFFDRIBBLE' then
+        return OFFDRIBBLE_TIMING
+    else
+        return PERFECT_TIMING
+    end
+end
+
+-- Check for recent dribble inputs
+local function hasRecentDribbleInputs()
+    local currentTime = tick()
+    for _, input in pairs(recentInputs) do
+        if currentTime - input.time <= 1.0 then
+            if
+                input.key == 'W'
+                or input.key == 'A'
+                or input.key == 'S'
+                or input.key == 'D'
+            then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Detect shot type
+local function detectShotType()
+    local character = player.Character
+    if not character then
+        return 'STANDING'
+    end
+
+    local humanoid = character:FindFirstChild('Humanoid')
+    local rootPart = character:FindFirstChild('HumanoidRootPart')
+
+    if not humanoid or not rootPart then
+        return 'STANDING'
+    end
+
+    local currentVelocity = rootPart.Velocity.Magnitude
+    local rims = findRimParts()
+
+    -- Check for DRIVING LAYUP
+    if currentVelocity > DRIVING_LAYUP_VELOCITY_THRESHOLD then
+        for _, rim in pairs(rims) do
+            if rim and rim.Parent then
+                local distance = (rootPart.Position - rim.Position).Magnitude
+                if distance < LAYUP_DETECTION_DISTANCE * 1.5 then
+                    return 'DRIVING_LAYUP'
+                end
+            end
+        end
+    end
+
+    -- Check for regular layup
+    for _, rim in pairs(rims) do
+        if rim and rim.Parent then
+            local distance = (rootPart.Position - rim.Position).Magnitude
+            local heightDiff = math.abs(rootPart.Position.Y - rim.Position.Y)
+
+            if
+                distance < LAYUP_DETECTION_DISTANCE
+                and heightDiff < LAYUP_HEIGHT_THRESHOLD
+            then
+                return 'LAYUP'
+            end
+
+            if
+                distance < CLOSESHOT_DETECTION_DISTANCE
+                and heightDiff >= LAYUP_HEIGHT_THRESHOLD
+            then
+                return 'CLOSESHOT'
+            end
+        end
+    end
+
+    local hasRecentMovement = hasRecentDribbleInputs()
+
+    -- Use average velocity if we have enough samples
+    if #recentVelocities >= 3 then
+        local totalVel = 0
+        local validSamples = 0
+        local currentTime = tick()
+
+        for _, entry in pairs(recentVelocities) do
+            if currentTime - entry.time <= 0.1 then
+                totalVel = totalVel + entry.vel
+                validSamples = validSamples + 1
+            end
+        end
+
+        if validSamples >= 2 then
+            local avgVelocity = totalVel / validSamples
+
+            if avgVelocity > 6.0 then
+                if hasRecentMovement then
+                    return 'OFFDRIBBLE'
+                else
+                    return 'MOVINGSHOT'
+                end
+            elseif avgVelocity > 4.0 and hasRecentMovement then
+                return 'OFFDRIBBLE'
+            elseif avgVelocity > 3.0 then
+                return 'MOVINGSHOT'
+            else
+                return 'STANDING'
+            end
+        end
+    end
+
+    -- Fallback to instant velocity check
+    if currentVelocity > 8.0 then
+        if hasRecentMovement then
+            return 'OFFDRIBBLE'
+        else
+            return 'MOVINGSHOT'
+        end
+    elseif currentVelocity > 5.0 and hasRecentMovement then
+        return 'OFFDRIBBLE'
+    elseif currentVelocity > 3.0 then
+        return 'MOVINGSHOT'
+    else
+        return 'STANDING'
+    end
+end
+
+-- Fire shoot remote
+local function fireShootRemote(shouldShoot)
+    local remotePaths = {
+        { 'ReplicatedStorage', 'Remotes', 'Server', 'Action' },
+        { 'ReplicatedStorage', 'Remotes', 'Action' },
+        { 'ReplicatedStorage', 'Events', 'Shoot' },
+        { 'ReplicatedStorage', 'Basketball', 'Shoot' },
+        { 'ReplicatedStorage', 'Shoot' },
+        { 'ReplicatedStorage', 'RemoteEvents', 'Shoot' },
+    }
+
+    for _, path in pairs(remotePaths) do
+        local current = game
+        local valid = true
+
+        for _, part in pairs(path) do
+            local child = current:FindFirstChild(part)
+            if child then
+                current = child
+            else
+                valid = false
+                break
+            end
+        end
+
+        if valid and current:IsA('RemoteEvent') then
+            local success = pcall(function()
+                if shouldShoot then
+                    current:FireServer(
+                        'Shoot',
+                        { Shoot = true, HoldingQ = false }
+                    )
+                else
+                    current:FireServer('Shoot', { Shoot = false })
+                end
+            end)
+
+            if success then
+                return true, ''
+            end
+        end
+    end
+
+    return false, 'Remote not found'
+end
+
+-- Auto release function
+local function autoRelease()
+    if isAutoShooting then
+        fireShootRemote(false)
+        shotCount = shotCount + 1
+        isAutoShooting = false
+
+        if autoReleaseConnection then
+            autoReleaseConnection:Disconnect()
+            autoReleaseConnection = nil
+        end
+    end
+end
+
+-- Start auto shooting sequence
+local function startAutoShoot(inputKey)
+    if config.autoPerfect and not isAutoShooting then
+        CURRENT_SHOT_TYPE = detectShotType()
+        isAutoShooting = true
+        meterStartTime = tick()
+        local optimalTiming = calculateOptimalTiming()
+
+        task.spawn(function()
+            task.wait(optimalTiming)
+            autoRelease()
+        end)
+    end
+end
+
+-- Track movement inputs
+local function trackMovementInput(keyCode)
+    local keyName = keyCode.Name
+    if keyName == 'W' or keyName == 'A' or keyName == 'S' or keyName == 'D' then
+        table.insert(recentInputs, { key = keyName, time = tick() })
+
+        local currentTime = tick()
+        for i = #recentInputs, 1, -1 do
+            if currentTime - recentInputs[i].time > 2.0 then
+                table.remove(recentInputs, i)
+            end
+        end
+    end
+end
+
+----------------------------------------------------------------------
+-- SHOOTING TAB
+----------------------------------------------------------------------
+
+-- Auto Green Toggle
+local AutoGreenToggle = ShootingLeftGroupbox:AddToggle('AutoGreenToggle', {
+    Text = 'Auto Green',
+    Default = config.autoPerfect,
+    Tooltip = 'Advanced auto green with shot type detection',
+    Callback = function(Value)
+        config.autoPerfect = Value
+    end,
+})
+
+-- Quick Stop Toggle
+local QuickStopToggle = ShootingLeftGroupbox:AddToggle('QuickStopToggle', {
+    Text = 'Quick Stop',
+    Default = config.quickstopShot,
+    Tooltip = 'Hold Q+E or R1+Square to stop movement when shooting',
+    Callback = function(Value)
+        config.quickstopShot = Value
+        quickstopShotEnabled = Value
+
+        if quickstopConnection then
+            quickstopConnection:Disconnect()
+            quickstopConnection = nil
+        end
+        if quickstopInputEndedConnection then
+            quickstopInputEndedConnection:Disconnect()
+            quickstopInputEndedConnection = nil
+        end
+
+        if quickstopShotEnabled then
+            local movementKeys = {
+                Enum.KeyCode.W,
+                Enum.KeyCode.A,
+                Enum.KeyCode.S,
+                Enum.KeyCode.D,
+                Enum.KeyCode.Thumbstick1,
+            }
+            local qHeld, eHeld, r1Held, squareHeld = false, false, false, false
+            local movementDisabled = false
+
+            local function blockMovement()
+                return Enum.ContextActionResult.Sink
+            end
+
+            local function disableMovementTemporarily()
+                if movementDisabled or not quickstopShotEnabled then
+                    return
+                end
+                movementDisabled = true
+                ContextActionService:BindAction(
+                    'BlockMovement',
+                    blockMovement,
+                    false,
+                    unpack(movementKeys)
+                )
+                task.delay(0.1, function()
+                    ContextActionService:UnbindAction('BlockMovement')
+                    movementDisabled = false
+                end)
+            end
+
+            quickstopConnection = UIS.InputBegan:Connect(
+                function(input, gameProcessed)
+                    if not quickstopShotEnabled or gameProcessed then
+                        return
+                    end
+                    local key = input.KeyCode
+                    if key == Enum.KeyCode.Q then
+                        qHeld = true
+                    end
+                    if key == Enum.KeyCode.E then
+                        eHeld = true
+                    end
+                    if key == Enum.KeyCode.ButtonR1 then
+                        r1Held = true
+                    end
+                    if key == Enum.KeyCode.ButtonX then
+                        squareHeld = true
+                    end
+                    if (qHeld and eHeld) or (r1Held and squareHeld) then
+                        disableMovementTemporarily()
+                    end
+                end
+            )
+
+            quickstopInputEndedConnection = UIS.InputEnded:Connect(
+                function(input)
+                    if not quickstopShotEnabled then
+                        return
+                    end
+                    local key = input.KeyCode
+                    if key == Enum.KeyCode.Q then
+                        qHeld = false
+                    end
+                    if key == Enum.KeyCode.E then
+                        eHeld = false
+                    end
+                    if key == Enum.KeyCode.ButtonR1 then
+                        r1Held = false
+                    end
+                    if key == Enum.KeyCode.ButtonX then
+                        squareHeld = false
+                    end
+                end
+            )
+        end
+    end,
+})
+
+----------------------------------------------------------------------
+-- PLAYER TAB
+----------------------------------------------------------------------
+
+-- Speed Boost
+local SpeedToggle = PlayerLeftGroupbox:AddToggle('SpeedToggle', {
+    Text = 'Speed Boost',
+    Default = config.speedBoost,
+    Tooltip = "Gives you more speed (don't go over 35)",
+    Callback = function(Value)
+        config.speedBoost = Value
+        if speedBoostConnection then
+            speedBoostConnection:Disconnect()
+        end
+        if Value then
+            speedBoostConnection = RunService.Heartbeat:Connect(function()
+                local character = player.Character
+                if not character then
+                    return
+                end
+                local humanoid = character:FindFirstChildOfClass('Humanoid')
+                local rootPart = character:FindFirstChild('HumanoidRootPart')
+                if not humanoid or not rootPart then
+                    return
+                end
+                local moveDir = humanoid.MoveDirection
+                if moveDir.Magnitude > 0 then
+                    rootPart.Velocity = moveDir.Unit * config.speedMultiplier
+                end
+            end)
+        end
+    end,
+})
+
+local SpeedSlider = PlayerLeftGroupbox:AddSlider('SpeedSlider', {
+    Text = 'Speed Multiplier',
+    Default = config.speedMultiplier,
+    Min = 0,
+    Max = 100,
+    Rounding = 0,
+    Callback = function(Value)
+        config.speedMultiplier = Value
+        if config.speedBoost then
+            if speedBoostConnection then
+                speedBoostConnection:Disconnect()
+            end
+            speedBoostConnection = RunService.Heartbeat:Connect(function()
+                local character = player.Character
+                if not character then
+                    return
+                end
+                local humanoid = character:FindFirstChildOfClass('Humanoid')
+                local rootPart = character:FindFirstChild('HumanoidRootPart')
+                if not humanoid or not rootPart then
+                    return
+                end
+                local moveDir = humanoid.MoveDirection
+                if moveDir.Magnitude > 0 then
+                    rootPart.Velocity = moveDir.Unit * config.speedMultiplier
+                end
+            end)
+        end
+    end,
+})
+
+-- Spinbot
+local SpinbotToggle = PlayerLeftGroupbox:AddToggle('SpinbotToggle', {
+    Text = 'Spinbot',
+    Default = config.spinbot,
+    Tooltip = 'Press T/L1 to spin when enabled',
+    Callback = function(Value)
+        config.spinbot = Value
+        if spinbotConnection then
+            spinbotConnection:Disconnect()
+            spinbotConnection = nil
+        end
+        if Value then
+            spinbotConnection = UIS.InputBegan:Connect(
+                function(input, gameProcessed)
+                    if not config.spinbot or gameProcessed then
+                        return
+                    end
+                    if
+                        input.KeyCode == Enum.KeyCode.T
+                        or input.KeyCode == Enum.KeyCode.ButtonL1
+                    then
+                        local character = player.Character
+                        local root = character
+                            and character:FindFirstChild('HumanoidRootPart')
+                        if not root then
+                            return
+                        end
+
+                        local angleRotated = 0
+                        local baseSpeed = 360 + config.spinbotSpeed * 100
+                        local spinSpeed = math.rad(baseSpeed)
+                        local spinTarget = 2 * math.pi
+
+                        local angularVelocity =
+                            Instance.new('BodyAngularVelocity')
+                        angularVelocity.MaxTorque = Vector3.new(0, math.huge, 0)
+                        angularVelocity.AngularVelocity =
+                            Vector3.new(0, spinSpeed, 0)
+                        angularVelocity.P = 10000
+                        angularVelocity.Parent = root
+
+                        local lastTime = tick()
+                        local conn
+                        conn = RunService.RenderStepped:Connect(function()
+                            if not config.spinbot then
+                                angularVelocity:Destroy()
+                                conn:Disconnect()
+                                return
+                            end
+                            local now = tick()
+                            local delta = now - lastTime
+                            lastTime = now
+                            local deltaAngle = spinSpeed * delta
+                            angleRotated = angleRotated + deltaAngle
+                            if angleRotated >= spinTarget then
+                                angularVelocity:Destroy()
+                                conn:Disconnect()
+                            end
+                        end)
+                    end
+                end
+            )
+        end
+    end,
+})
+
+-- Spinbot Hold
+local SpinbotHoldToggle = PlayerLeftGroupbox:AddToggle('SpinbotHoldToggle', {
+    Text = 'Spinbot Hold',
+    Default = config.spinbotHold,
+    Tooltip = 'Hold T/L1 to spin continuously instead of tapping',
+    Callback = function(Value)
+        config.spinbotHold = Value
+
+        if spinbotHoldConnection then
+            spinbotHoldConnection:Disconnect()
+            spinbotHoldConnection = nil
+        end
+        if spinbotInputEndConnection then
+            spinbotInputEndConnection:Disconnect()
+            spinbotInputEndConnection = nil
+        end
+
+        if currentAngularVelocity then
+            currentAngularVelocity:Destroy()
+            currentAngularVelocity = nil
+        end
+
+        if not Value then
+            spinbotHoldActive = false
+            return
+        end
+
+        spinbotHoldConnection = UIS.InputBegan:Connect(
+            function(input, gameProcessed)
+                if not config.spinbotHold or gameProcessed then
+                    return
+                end
+                if
+                    input.KeyCode == Enum.KeyCode.T
+                    or input.KeyCode == Enum.KeyCode.ButtonL1
+                then
+                    if not spinbotHoldActive then
+                        spinbotHoldActive = true
+                        local character = player.Character
+                        local root = character
+                            and character:FindFirstChild('HumanoidRootPart')
+                        if not root then
+                            spinbotHoldActive = false
+                            return
+                        end
+
+                        if currentAngularVelocity then
+                            currentAngularVelocity:Destroy()
+                            currentAngularVelocity = nil
+                        end
+
+                        local baseSpeed = 360 + config.spinbotSpeed * 100
+                        local spinSpeed = math.rad(baseSpeed)
+                        currentAngularVelocity =
+                            Instance.new('BodyAngularVelocity')
+                        currentAngularVelocity.MaxTorque =
+                            Vector3.new(0, math.huge, 0)
+                        currentAngularVelocity.AngularVelocity =
+                            Vector3.new(0, spinSpeed, 0)
+                        currentAngularVelocity.P = 10000
+                        currentAngularVelocity.Parent = root
+                    end
+                end
+            end
+        )
+
+        spinbotInputEndConnection = UIS.InputEnded:Connect(
+            function(input, gameProcessed)
+                if not config.spinbotHold or gameProcessed then
+                    return
+                end
+                if
+                    input.KeyCode == Enum.KeyCode.T
+                    or input.KeyCode == Enum.KeyCode.ButtonL1
+                then
+                    if spinbotHoldActive then
+                        spinbotHoldActive = false
+                        if currentAngularVelocity then
+                            currentAngularVelocity:Destroy()
+                            currentAngularVelocity = nil
+                        end
+                    end
+                end
+            end
+        )
+    end,
+})
+
+local SpinbotSpeedSlider = PlayerLeftGroupbox:AddSlider('SpinbotSpeedSlider', {
+    Text = 'Spinbot Speed',
+    Default = config.spinbotSpeed,
+    Min = 0,
+    Max = 50,
+    Rounding = 0,
+    Callback = function(Value)
+        config.spinbotSpeed = Value
+    end,
+})
+
+-- Stretch Resolution
+local StretchResolutionToggle =
+    PlayerRightGroupbox:AddToggle('StretchResolutionToggle', {
+        Text = 'Stretch Resolution',
+        Default = config.stretchResolution,
+        Tooltip = 'Modifies camera resolution for better field of view',
+        Callback = function(Value)
+            config.stretchResolution = Value
+            if Value then
+                getgenv().Resolution = {
+                    ['.gg/scripters'] = 0.65,
+                }
+
+                local Camera = workspace.CurrentCamera
+                if getgenv().gg_scripters == nil then
+                    _G.StretchResolutionConnection = game
+                        :GetService('RunService').RenderStepped
+                        :Connect(function()
+                            Camera.CFrame = Camera.CFrame
+                                * CFrame.new(
+                                    0,
+                                    0,
+                                    0,
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    getgenv().Resolution['.gg/scripters'],
+                                    0,
+                                    0,
+                                    0,
+                                    1
+                                )
+                        end)
+                end
+                getgenv().gg_scripters = 'Aori0001'
+            else
+                if _G.StretchResolutionConnection then
+                    _G.StretchResolutionConnection:Disconnect()
+                    _G.StretchResolutionConnection = nil
+                end
+                getgenv().gg_scripters = nil
+                getgenv().Resolution = nil
+            end
+        end,
+    })
+
+-- Anti Contest
+local AntiContestToggle = PlayerRightGroupbox:AddToggle('AntiContestToggle', {
+    Text = 'Anti Contest',
+    Default = config.antiContest,
+    Tooltip = 'Press E or X to jump high (works with or without ball) - Jump reduced by 35',
+    Callback = function(Value)
+        config.antiContest = Value
+    end,
+})
+
+-- Anti Out of Bounds
+local AntiOutOfBoundsToggle =
+    PlayerRightGroupbox:AddToggle('AntiOutOfBoundsToggle', {
+        Text = 'Anti Out of Bounds',
+        Default = config.antiOutOfBounds,
+        Tooltip = 'Removes court boundary restrictions',
+        Callback = function(Value)
+            config.antiOutOfBounds = Value
+            if Value then
+                for _, descendant in ipairs(Workspace:GetDescendants()) do
+                    if
+                        descendant:IsA('Folder')
+                        and (
+                            descendant.Name == 'OutOfBounds'
+                            or descendant.Name == 'InboundPositions'
+                            or descendant.Name == 'OOB'
+                            or descendant.Name == 'CourtBorders'
+                            or descendant.Name:lower():find('bound')
+                            or descendant.Name:lower():find('barrier')
+                        )
+                    then
+                        descendant:Destroy()
+                    elseif
+                        descendant:IsA('BasePart')
+                        and (
+                            descendant.Name == 'oob'
+                            or descendant.Name == 'OOB'
+                            or descendant.Name == 'CourtBorders'
+                            or descendant.Name == 'OutOfBounds'
+                            or descendant.Name == 'Boundary'
+                            or descendant.Name == 'Border'
+                            or descendant.Name:lower():find('bound')
+                            or descendant.Name:lower():find('barrier')
+                            or descendant.Name:lower():find('wall')
+                        )
+                    then
+                        descendant:Destroy()
+                    end
+                end
+
+                if
+                    not _G.HS_ADVUI_AOB_Conn
+                    or not _G.HS_ADVUI_AOB_Conn.Connected
+                then
+                    _G.HS_ADVUI_AOB_Conn = Workspace.DescendantAdded:Connect(
+                        function(descendant)
+                            if config.antiOutOfBounds then
+                                task.wait(0.1)
+
+                                if
+                                    descendant:IsA('Folder')
+                                    and (
+                                        descendant.Name == 'OutOfBounds'
+                                        or descendant.Name == 'InboundPositions'
+                                        or descendant.Name == 'OOB'
+                                        or descendant.Name:lower():find('bound')
+                                    )
+                                then
+                                    descendant:Destroy()
+                                elseif
+                                    descendant:IsA('BasePart')
+                                    and (
+                                        descendant.Name == 'oob'
+                                        or descendant.Name == 'OOB'
+                                        or descendant.Name:lower():find('bound')
+                                        or descendant.Name
+                                            :lower()
+                                            :find('barrier')
+                                    )
+                                then
+                                    descendant:Destroy()
+                                end
+                            end
+                        end
+                    )
+                end
+            else
+                if _G.HS_ADVUI_AOB_Conn and _G.HS_ADVUI_AOB_Conn.Connected then
+                    _G.HS_ADVUI_AOB_Conn:Disconnect()
+                end
+            end
+        end,
+    })
+
+-- Infinite Stamina
+local InfiniteStaminaToggle =
+    PlayerRightGroupbox:AddToggle('InfiniteStaminaToggle', {
+        Text = 'Infinite Stamina !SOON!',
+        Default = config.infiniteStamina,
+        Tooltip = 'Never run out of stamina',
+        Callback = function(Value)
+            config.infiniteStamina = Value
+
+            if staminaConnection then
+                staminaConnection:Disconnect()
+                staminaConnection = nil
+            end
+
+            if Value then
+                pcall(function()
+                    ReplicatedStorage:WaitForChild('Remotes')
+                        :WaitForChild('Server')
+                        :WaitForChild('Stamina')
+                        :FireServer(true)
+                end)
+
+                staminaConnection = task.spawn(function()
+                    while config.infiniteStamina do
+                        pcall(function()
+                            for i = 1, 3 do
+                                ReplicatedStorage:WaitForChild('Remotes')
+                                    :WaitForChild('Server')
+                                    :WaitForChild('Stamina')
+                                    :FireServer(true)
+                                task.wait(0.1)
+                            end
+
+                            local playerData =
+                                player:FindFirstChild('PlayerData')
+                            if
+                                playerData
+                                and playerData:FindFirstChild('Slots')
+                            then
+                                for i = 1, 5 do
+                                    local slot =
+                                        playerData.Slots:FindFirstChild(
+                                            tostring(i)
+                                        )
+                                    if slot then
+                                        local attrStamina = slot:FindFirstChild(
+                                            'Attributes'
+                                        ) and slot.Attributes:FindFirstChild(
+                                            'Stamina'
+                                        )
+                                        if attrStamina then
+                                            attrStamina.Value = 100
+                                        end
+
+                                        local origStamina = slot:FindFirstChild(
+                                            'OriginalStats'
+                                        ) and slot.OriginalStats:FindFirstChild(
+                                            'Stamina'
+                                        )
+                                        if origStamina then
+                                            origStamina.Value = 100
+                                        end
+                                    end
+                                end
+                            end
+
+                            local character = player.Character
+                            if character then
+                                for _, child in
+                                    pairs(character:GetDescendants())
+                                do
+                                    if
+                                        child.Name == 'Stamina'
+                                        and (
+                                            child:IsA('NumberValue')
+                                            or child:IsA('IntValue')
+                                        )
+                                    then
+                                        child.Value = 100
+                                    end
+                                end
+                            end
+
+                            local assets =
+                                ReplicatedStorage:FindFirstChild('Assets')
+                            if assets then
+                                local staminaBar1 =
+                                    assets:FindFirstChild('StaminaBar1')
+                                if
+                                    staminaBar1
+                                    and staminaBar1:FindFirstChild('SurfaceGui')
+                                then
+                                    local surfaceGui = staminaBar1.SurfaceGui
+                                    local staminaBar =
+                                        surfaceGui:FindFirstChild('StaminaBar')
+                                    local staminaBarMax =
+                                        surfaceGui:FindFirstChild(
+                                            'StaminaBarMax'
+                                        )
+                                    if staminaBar and staminaBarMax then
+                                        staminaBar.Size = staminaBarMax.Size
+                                    end
+                                end
+                            end
+
+                            local gui = player:FindFirstChild('PlayerGui')
+                            if gui then
+                                for _, child in pairs(gui:GetChildren()) do
+                                    if child.Name:lower():find('stamina') then
+                                        if
+                                            child:IsA('Frame')
+                                            or child:IsA('ScreenGui')
+                                        then
+                                            for _, bar in
+                                                pairs(child:GetDescendants())
+                                            do
+                                                if
+                                                    bar.Name == 'StaminaBar'
+                                                    and bar:IsA('Frame')
+                                                then
+                                                    local maxBar =
+                                                        bar.Parent:FindFirstChild(
+                                                            'StaminaBarMax'
+                                                        )
+                                                    if maxBar then
+                                                        bar.Size = maxBar.Size
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+
+                                local profileStamina = gui:FindFirstChild(
+                                    'Package'
+                                ) and gui.Package:FindFirstChild(
+                                    'NewTabMenu'
+                                ) and gui.Package.NewTabMenu:FindFirstChild(
+                                    'ProfileBG'
+                                ) and gui.Package.NewTabMenu.ProfileBG:FindFirstChild(
+                                    'Profile'
+                                ) and gui.Package.NewTabMenu.ProfileBG.Profile:FindFirstChild(
+                                    'StatsScroll'
+                                ) and gui.Package.NewTabMenu.ProfileBG.Profile.StatsScroll:FindFirstChild(
+                                    'Attributes'
+                                ) and gui.Package.NewTabMenu.ProfileBG.Profile.StatsScroll.Attributes:FindFirstChild(
+                                    'StatsHolder'
+                                ) and gui.Package.NewTabMenu.ProfileBG.Profile.StatsScroll.Attributes.StatsHolder:FindFirstChild(
+                                    'Stamina'
+                                )
+                                if profileStamina then
+                                    profileStamina.Value = 100
+                                end
+                            end
+
+                            local starterPlayer =
+                                game:GetService('StarterPlayer')
+                            if starterPlayer then
+                                local starterCharacter =
+                                    starterPlayer:FindFirstChild(
+                                        'StarterCharacter'
+                                    )
+                                if starterCharacter then
+                                    for _, child in
+                                        pairs(starterCharacter:GetDescendants())
+                                    do
+                                        if
+                                            child.Name:lower():find('stamina')
+                                            and child:IsA('NumberValue')
+                                        then
+                                            child.Value = 100
+                                        end
+                                    end
+                                end
+                            end
+                        end)
+                        task.wait(0.5)
+                    end
+                end)
+            end
+        end,
+    })
+
+----------------------------------------------------------------------
+-- DEFENSE TAB
+----------------------------------------------------------------------
+
+-- Auto Guard
+local AutoGuardToggle = DefenseLeftGroupbox:AddToggle('AutoGuardToggle', {
+    Text = 'Auto Guard',
+    Default = false,
+    Tooltip = 'Hold G/L2/mobile to guard closest player',
+    Callback = function(Value)
+        config.autoGuard = Value
+        if autoGuardConnection then
+            autoGuardConnection:Disconnect()
+            autoGuardConnection = nil
+        end
+        if Value then
+            autoGuardConnection = RunService.RenderStepped:Connect(function(dt)
+                if not isGuardKeyHeld then
+                    return
+                end
+
+                local char = player.Character
+                local hum = char and char:FindFirstChild('Humanoid')
+                local root = char and char:FindFirstChild('HumanoidRootPart')
+                if not (hum and root) then
+                    return
+                end
+
+                local closest, dist = nil, math.huge
+                for _, p in ipairs(Players:GetPlayers()) do
+                    local otherRoot = p.Character
+                        and p.Character:FindFirstChild('HumanoidRootPart')
+                    if p ~= player and otherRoot then
+                        local mag = (otherRoot.Position - root.Position).Magnitude
+                        if mag < dist then
+                            closest = p.Character
+                            dist = mag
+                        end
+                    end
+                end
+
+                local rim, rimDist = nil, math.huge
+                for _, r in ipairs(rimParts) do
+                    if r and r:IsDescendantOf(Workspace) then
+                        local d = (r.Position - root.Position).Magnitude
+                        if d < rimDist then
+                            rim = r
+                            rimDist = d
+                        end
+                    end
+                end
+
+                if closest and rim then
+                    local rimPos = rim.Position
+                    local targetPos =
+                        closest:FindFirstChild('HumanoidRootPart').Position
+
+                    local dir = (targetPos - rimPos).Unit
+
+                    local desired = targetPos - dir * config.guardDistance
+                    desired = Vector3.new(desired.X, root.Position.Y, desired.Z)
+
+                    local moveVec = desired - root.Position
+                    local moveDistance = moveVec.Magnitude
+
+                    if moveDistance > 0.5 then
+                        local moveSpeed = math.max(moveDistance * 8, 20)
+                        local newPosition = root.Position
+                            + (moveVec.Unit * moveSpeed * dt)
+
+                        local lerpFactor =
+                            math.min(moveSpeed * dt / moveDistance, 1)
+                        newPosition = root.Position:Lerp(desired, lerpFactor)
+
+                        root.CFrame = CFrame.new(
+                            newPosition,
+                            Vector3.new(targetPos.X, newPosition.Y, targetPos.Z)
+                        )
+                    else
+                        local lookPos = Vector3.new(
+                            targetPos.X,
+                            root.Position.Y,
+                            targetPos.Z
+                        )
+                        root.CFrame = CFrame.new(root.Position, lookPos)
+                    end
+
+                    hum:Move(Vector3.zero, false)
+                end
+            end)
+        end
+    end,
+})
+
+local GuardDistanceSlider =
+    DefenseLeftGroupbox:AddSlider('GuardDistanceSlider', {
+        Text = 'Guard Distance',
+        Default = config.guardDistance,
+        Min = 1,
+        Max = 20,
+        Rounding = 0,
+        Callback = function(Value)
+            config.guardDistance = Value
+        end,
+    })
+
+----------------------------------------------------------------------
+-- MISC TAB (no groupboxes)
+----------------------------------------------------------------------
+
+-- Misc tab is now available for future features without groupboxes
+
+----------------------------------------------------------------------
+-- UI SETTINGS TAB
+----------------------------------------------------------------------
+
+local ThemeGroupbox = UISettingsTab:AddLeftGroupbox('Theme Colors', 'palette')
+
+local BackgroundLabel = ThemeGroupbox:AddLabel('Background Color')
+BackgroundLabel:AddColorPicker('BackgroundColor', {
+    Default = Library.Scheme.BackgroundColor,
+    Title = 'Background Color',
+    Callback = function(Value)
+        Library.Scheme.BackgroundColor = Value
+        Library:UpdateColorsUsingRegistry()
+    end,
+})
+
+local MainLabel = ThemeGroupbox:AddLabel('Main Color')
+MainLabel:AddColorPicker('MainColor', {
+    Default = Library.Scheme.MainColor,
+    Title = 'Main Color',
+    Callback = function(Value)
+        Library.Scheme.MainColor = Value
+        Library:UpdateColorsUsingRegistry()
+    end,
+})
+
+local AccentLabel = ThemeGroupbox:AddLabel('Accent Color')
+AccentLabel:AddColorPicker('AccentColor', {
+    Default = Library.Scheme.AccentColor,
+    Title = 'Accent Color',
+    Callback = function(Value)
+        Library.Scheme.AccentColor = Value
+        Library:UpdateColorsUsingRegistry()
+    end,
+})
+
+Library.Scheme.AccentColor = Color3.fromHex('#ff00b8')
+Library.Scheme.BackgroundColor = Color3.fromHex('#0a0a0a')
+Library:UpdateColorsUsingRegistry()
+
+local OutlineLabel = ThemeGroupbox:AddLabel('Outline Color')
+OutlineLabel:AddColorPicker('OutlineColor', {
+    Default = Library.Scheme.OutlineColor,
+    Title = 'Outline Color',
+    Callback = function(Value)
+        Library.Scheme.OutlineColor = Value
+        Library:UpdateColorsUsingRegistry()
+    end,
+})
+
+local FontLabel = ThemeGroupbox:AddLabel('Font Color')
+FontLabel:AddColorPicker('FontColor', {
+    Default = Library.Scheme.FontColor,
+    Title = 'Font Color',
+    Callback = function(Value)
+        Library.Scheme.FontColor = Value
+        Library:UpdateColorsUsingRegistry()
+    end,
+})
+
+----------------------------------------------------------------------
+-- INPUT HANDLING
+----------------------------------------------------------------------
+
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then
+        return
+    end
+    if
+        input.KeyCode == Enum.KeyCode.G
+        or input.KeyCode == Enum.KeyCode.ButtonL2
+    then
+        isGuardKeyHeld = true
+    end
+end)
+
+UIS.InputEnded:Connect(function(input, gameProcessed)
+    if gameProcessed then
+        return
+    end
+    if
+        input.KeyCode == Enum.KeyCode.G
+        or input.KeyCode == Enum.KeyCode.ButtonL2
+    then
+        isGuardKeyHeld = false
+    end
+end)
+
+-- Mobile guard button support
+task.spawn(function()
+    local gui = player:WaitForChild('PlayerGui', 5)
+    local mobile = gui:FindFirstChild('Mobile')
+    if not mobile then
+        return
+    end
+    local defense = mobile:FindFirstChild('Defense')
+    if not defense then
+        return
+    end
+    local guardButton = defense:FindFirstChild('Guard')
+    if guardButton then
+        guardButton.TouchTap:Connect(function()
+            isGuardKeyHeld = true
+        end)
+        guardButton.TouchEnded:Connect(function()
+            isGuardKeyHeld = false
+        end)
+        guardButton.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch then
+                isGuardKeyHeld = true
+            end
+        end)
+        guardButton.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch then
+                isGuardKeyHeld = false
+            end
+        end)
+    end
+end)
+
+----------------------------------------------------------------------
+-- MAIN GAME LOOP & INITIALIZATION
+----------------------------------------------------------------------
+
+local function tryAddRim(part)
+    if part:IsA('MeshPart') and part.Name:lower():find('rim') then
+        table.insert(rimParts, part)
+    end
+end
+
+for _, part in ipairs(Workspace:GetDescendants()) do
+    tryAddRim(part)
+end
+Workspace.DescendantAdded:Connect(tryAddRim)
+
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then
+        return
+    end
+
+    trackMovementInput(input.KeyCode)
+
+    if
+        input.KeyCode == Enum.KeyCode.E
+        or input.KeyCode == Enum.KeyCode.ButtonX
+    then
+        local character = player.Character
+        if character then
+            local hasBall = false
+            for _, child in ipairs(character:GetChildren()) do
+                if
+                    child:IsA('Part')
+                    and child.Name == 'Ball'
+                    and not child.CanCollide
+                then
+                    hasBall = true
+                    break
+                end
+            end
+
+            -- Anti Contest (High Jump) - Works with both E and X keys
+            if config.antiContest then
+                local rootPart = character:FindFirstChild('HumanoidRootPart')
+                if rootPart then
+                    local currentVelocity = rootPart.AssemblyLinearVelocity
+                        or rootPart.Velocity
+                    rootPart.AssemblyLinearVelocity =
+                        Vector3.new(currentVelocity.X, 50, currentVelocity.Z)
+                end
+            end
+
+            -- Auto Green - Only trigger for E when holding ball, or ButtonX/ButtonA
+            if config.autoPerfect then
+                if
+                    (input.KeyCode == Enum.KeyCode.E and hasBall)
+                    or input.KeyCode == Enum.KeyCode.ButtonX
+                then
+                    local success, errorMsg = fireShootRemote(true)
+                    if success then
+                        startAutoShoot(input.KeyCode.Name)
+                    end
+                end
+            end
+        end
+    end
+
+    if config.autoPerfect and input.KeyCode == Enum.KeyCode.ButtonA then
+        local success, errorMsg = fireShootRemote(true)
+        if success then
+            startAutoShoot(input.KeyCode.Name)
+        end
+    end
+end)
+
+UIS.InputEnded:Connect(function(input, gameProcessed)
+    if not gameProcessed and isAutoShooting then
+        if
+            input.KeyCode == Enum.KeyCode.E
+            or input.KeyCode == Enum.KeyCode.ButtonX
+        then
+            isAutoShooting = false
+            if autoReleaseConnection then
+                autoReleaseConnection:Disconnect()
+                autoReleaseConnection = nil
+            end
+        end
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    local character = player.Character
+    if not character then
+        return
+    end
+
+    local humanoid = character:FindFirstChild('Humanoid')
+    local rootPart = character:FindFirstChild('HumanoidRootPart')
+
+    if humanoid and rootPart then
+        local currentTime = tick()
+        local velocity = rootPart.Velocity.Magnitude
+
+        table.insert(recentVelocities, { vel = velocity, time = currentTime })
+
+        for i = #recentVelocities, 1, -1 do
+            if currentTime - recentVelocities[i].time > 0.3 then
+                table.remove(recentVelocities, i)
+            else
+                break
+            end
+        end
+
+        lastVelocityCheck = currentTime
+    end
+
+    if isAutoShooting and meterStartTime > 0 then
+        local currentTime = tick() - meterStartTime
+        if currentTime > 2.0 then
+            isAutoShooting = false
+            if autoReleaseConnection then
+                autoReleaseConnection:Disconnect()
+                autoReleaseConnection = nil
+            end
+        end
+    end
+end)
