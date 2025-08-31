@@ -3,3 +3,5 @@ getgenv().EnabledASRM = true
 getgenv().EnabledBB = true
 getgenv().EnabledHN = true
 getgenv().EnabledHZ = true
+getgenv().EnabledHL = true
+getgenv().EnabledHOL = true
