@@ -1,21 +1,3 @@
---[[
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                         Holy Services                            ║
-    ║                    Premium Roblox Script                     ║
-    ║                                                              ║
-    ║  🎯 Multi-Game Support: The Bronx, South Bronx, BlockSpin   ║
-    ║  🔥 Features: Auto Drop 10K, Gun Mods, Teleports & More     ║
-    ║  💎 Created by: Holy Services Development Team                   ║
-    ║  🔗 Discord: discord.gg/HolyServices                             ║
-    ║  📅 Version: 3.0 Enhanced Edition                           ║
-    ║                                                              ║
-    ║  ⚠️  For Premium Members Only - Do Not Share                ║
-    ╚══════════════════════════════════════════════════════════════╝
---]]
-
--- Holy Services Premium Script - Enhanced Edition v3.0
--- Developed by Holy Services Team | discord.gg/HolyServices
--- Multi-game support with advanced features
 
 -- Startup message
 print("╔═══════════════════════════════════════════════════════════════╗")
