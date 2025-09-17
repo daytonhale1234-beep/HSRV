@@ -5,3 +5,7 @@ getgenv().EnabledHN = true
 getgenv().EnabledHZ = true
 getgenv().EnabledHL = true
 getgenv().EnabledHOL = true
+getgenv().EnabledIG = true
+getgenv().EnabledMM2 = true
+getgenv().EnabledRB = true
+getgenv().EnabledSAB = true
