@@ -1,16 +1,4 @@
 
--- Startup message
-print("╔═══════════════════════════════════════════════════════════════╗")
-print("║            🎉 THANKS FOR USING HOLY SERVICES! 🎉                   ║")
-print("║                                                               ║")
-print("║  ✅ SAFE & BYPASSED THE ANTI-CHEAT ✅                         ║")
-print("║                                                               ║")
-print("║  🔗 Join our Discord for more scripts & updates:             ║")
-print("║     discord.gg/HolyServices                                        ║")
-print("║                                                               ║")
-print("║  💎 Premium features unlocked!                                ║")
-print("║  🚀 Loading enhanced UI...                                    ║")
-print("╚═══════════════════════════════════════════════════════════════╝")
 
 task.wait(2)
 
@@ -16011,9 +15999,3 @@ if hookfunction and not Solara and LPH_OBFUSCATED and Game_Name == "South Bronx"
     end)
 end
 
--- Holy Services Premium Script - UI loads with original styling
-
--- End of Holy Services Premium Script v3.0
--- Developed by Holy Services Team
--- Join our community: discord.gg/HolyServices
--- Thank you for using Holy Services Premium!
