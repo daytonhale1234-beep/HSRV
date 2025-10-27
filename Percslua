@@ -577,7 +577,7 @@ local function RebuildTriggerFinderUI(state)
                             name = "Any Item Trigger (Medium Risk)",
                             type = "item",
                             res = {"hunting"},
-                [stdout]             all = false
+                            all = false
                         },
                         {
                             id = "inside_fruitpicker",
