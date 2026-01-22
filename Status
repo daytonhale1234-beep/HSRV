@@ -10,3 +10,4 @@ getgenv().EnabledMM2 = true
 getgenv().EnabledRB = true
 getgenv().EnabledSAB = true
 getgenv().EnabledPGB = true
+getgenv().EnabledNBA = true
